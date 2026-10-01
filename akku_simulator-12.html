@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Lithium-Ionen-Akku Simulator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; overflow: hidden; background-color: #030712; color: #f3f4f6; margin: 0; padding: 0; }
+        .no-select { user-select: none; }
+        
+        /* Eigener Scrollbar für die Sidebar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1f2937; }
+        ::-webkit-scrollbar-thumb { background: #4b5563; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+        
+        canvas { touch-action: none; }
+    </style>
+</head>
+<body class="flex flex-col md:flex-row h-screen w-screen overflow-hidden bg-gray-950">
+
+    <aside id="sidebar" class="w-full md:w-80 h-[45vh] md:h-full shrink-0 bg-gray-900 border-b md:border-r md:border-b-0 border-gray-700 flex flex-col p-4 z-10 shadow-2xl relative overflow-y-auto">
+        <h1 class="text-xl font-bold text-white mb-1">Akku Simulator</h1>
+        <p class="text-xs text-gray-400 mb-5">Physikalische & chemische Prozesse</p>
+
+        <!-- Tabs -->
+        <div class="flex bg-gray-800 rounded-lg p-1 mb-5 shrink-0">
+            <button id="tab-normal" class="flex-1 py-2 rounded-md bg-blue-600 text-white text-sm font-bold shadow transition-colors">Normalbetrieb</button>
+            <button id="tab-danger" class="flex-1 py-2 rounded-md text-gray-400 hover:text-gray-200 text-sm font-bold transition-colors">Verschleiß</button>
+        </div>
+
+        <!-- Normalbetrieb Panel -->
+        <div id="panel-normal" class="flex flex-col gap-4 flex-1 shrink-0">
+            <div class="flex gap-2">
+                <button id="btn-charge" class="flex-1 bg-green-600 hover:bg-green-500 text-white py-2 rounded font-bold transition-colors shadow-lg">Laden</button>
+                <button id="btn-pause" class="flex-1 bg-gray-600 hover:bg-gray-500 text-white py-2 rounded font-bold transition-colors shadow-lg">Pause</button>
+                <button id="btn-discharge" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold transition-colors shadow-lg">Entladen</button>
+            </div>
+            
+            <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
+                <label class="text-xs text-gray-300 font-bold uppercase tracking-wider block mb-2">Animationsgeschwindigkeit</label>
+                <div class="flex items-center gap-3">
+                    <input type="range" id="slider-speed" min="0.1" max="4" step="0.1" value="1" class="flex-1 accent-blue-500">
+                    <span id="lbl-speed" class="text-sm font-mono bg-gray-900 px-2 py-1 rounded">1.0x</span>
+                </div>
+            </div>
+
+            <div class="bg-blue-900/30 p-3 rounded-lg border border-blue-800/50 text-xs text-blue-200 leading-relaxed overflow-y-auto max-h-32" id="info-text-normal">
+                System pausiert. Wähle <b>Laden</b> oder <b>Entladen</b>, um die Reaktion zu starten.
+            </div>
+        </div>
+
+        <!-- Gefahren Panel -->
+        <div id="panel-danger" class="hidden flex flex-col gap-4 flex-1 shrink-0">
+            <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
+                <label class="text-xs text-gray-300 font-bold uppercase tracking-wider block mb-2">Ladestrom (Schnellladen)</label>
+                <div class="flex items-center gap-3 mb-1">
+                    <input type="range" id="slider-crate" min="0.5" max="5.0" step="0.5" value="1.0" class="flex-1 accent-red-500">
+                    <span id="lbl-crate" class="text-sm font-mono bg-gray-900 px-2 py-1 rounded w-14 text-center">1.0 C</span>
+                </div>
+            </div>
+
+            <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
+                <label class="text-xs text-gray-300 font-bold uppercase tracking-wider block mb-2">Außentemperatur</label>
+                <div class="flex items-center gap-3 mb-1">
+                    <input type="range" id="slider-temp" min="-20" max="60" step="5" value="20" class="flex-1 accent-orange-500">
+                    <span id="lbl-temp" class="text-sm font-mono bg-gray-900 px-2 py-1 rounded w-14 text-center">20 °C</span>
+                </div>
+            </div>
+
+            <button id="btn-simulate-aging" class="w-full bg-orange-600 hover:bg-orange-500 text-white py-3 rounded font-bold shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2">
+                <span class="material-icons text-lg">fast_forward</span> Zeitraffer: Verschleiß
+            </button>
+            
+            <div class="bg-gray-950 p-3 rounded-lg border border-gray-800 flex-1 overflow-y-auto">
+                <h4 class="text-[10px] font-bold text-gray-500 mb-2 uppercase tracking-wider">Diagnose</h4>
+                <ul id="warning-list" class="text-xs list-disc pl-4 space-y-1.5 font-medium">
+                    <li class="text-green-500">Zelle im Normalzustand.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- HUD: Statistiken und Reset -->
+        <div class="mt-auto border-t border-gray-700 pt-4 flex flex-col gap-3 shrink-0">
+            <div>
+                <div class="flex justify-between text-xs text-gray-400 mb-1 font-bold uppercase tracking-wider">
+                    <span>Ladezustand (SoC)</span>
+                    <span id="hud-soc" class="text-white">50%</span>
+                </div>
+                <div class="w-full bg-gray-800 h-3 rounded-full overflow-hidden border border-gray-700">
+                    <div id="bar-soc" class="bg-green-500 h-full w-1/2 transition-all duration-300"></div>
+                </div>
+            </div>
+            
+            <div>
+                <div class="flex justify-between text-xs text-gray-400 mb-1 font-bold uppercase tracking-wider">
+                    <span>Zellspannung (U)</span>
+                    <span id="hud-voltage" class="text-blue-400 font-mono font-bold text-sm">3.70 V</span>
+                </div>
+                <div class="w-full h-12 bg-gray-950 rounded-lg border border-gray-700 relative overflow-hidden">
+                    <canvas id="voltage-graph" class="w-full h-full block"></canvas>
+                </div>
+            </div>
+            
+            <div class="flex justify-between items-center bg-gray-800 p-2 rounded-lg border border-gray-700">
+                <span class="text-xs text-gray-400 font-bold uppercase tracking-wider">Innentemperatur</span>
+                <span id="hud-celltemp" class="font-mono font-bold text-green-400 text-base">20°C</span>
+            </div>
+            
+            <button id="btn-reset" class="w-full bg-red-900/80 hover:bg-red-700 text-white py-2 rounded-lg text-sm font-bold transition-colors border border-red-800 flex justify-center items-center gap-2">
+                <span class="material-icons text-sm">restart_alt</span> Zelle reparieren
+            </button>
+        </div>
+    </aside>
+
+    <!-- Main Canvas Area -->
+    <main class="flex-1 relative bg-gray-950 min-h-[55vh] md:min-h-0 min-w-0 overflow-hidden" id="canvas-container">
+        <canvas id="batteryCanvas" class="absolute inset-0 w-full h-full block cursor-crosshair"></canvas>
+        
+        <!-- Legend Overlay -->
+        <div class="absolute top-2 left-2 md:top-4 md:left-4 bg-gray-900/80 backdrop-blur-md text-white p-2 md:p-4 rounded-xl border border-gray-700/50 pointer-events-none shadow-2xl scale-[0.65] md:scale-100 origin-top-left">
+            <h4 class="text-[10px] md:text-xs font-bold text-gray-400 mb-2 md:mb-4 uppercase tracking-widest">Teilchen-Legende</h4>
+            
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-6 h-6 rounded-full bg-gradient-to-br from-gray-400 to-gray-600 border-2 border-gray-300 flex items-center justify-center text-[9px] font-bold shadow-lg">Li</div>
+                <div class="flex flex-col">
+                    <span class="text-xs md:text-sm font-bold text-gray-100">Lithium-Atom</span>
+                    <span class="text-[9px] md:text-[10px] text-gray-400">Neutral (im Gitter)</span>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-3 mb-2">
+                <div class="w-5 h-5 rounded-full bg-gradient-to-br from-green-400 to-green-600 border-2 border-green-300 flex items-center justify-center text-[11px] font-bold shadow-lg">+</div>
+                <div class="flex flex-col">
+                    <span class="text-xs md:text-sm font-bold text-green-400">Ion (Li⁺)</span>
+                    <span class="text-[9px] md:text-[10px] text-gray-400">Wandert im Elektrolyt</span>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-3 mb-1">
+                <div class="w-4 h-4 rounded-full bg-gradient-to-br from-blue-400 to-blue-600 border-2 border-blue-300 flex items-center justify-center text-[12px] font-bold shadow-lg">-</div>
+                <div class="flex flex-col">
+                    <span class="text-xs md:text-sm font-bold text-blue-400">Elektron (e⁻)</span>
+                    <span class="text-[9px] md:text-[10px] text-gray-400">Fließt durch Kabel</span>
+                </div>
+            </div>
+            
+            <!-- Dendrite Legend -->
+            <div id="legend-dendrite" class="hidden flex-col gap-2 mt-3 pt-3 border-t border-gray-700/50">
+                <div class="flex items-center gap-3">
+                    <div class="w-5 h-5 rounded-full bg-gradient-to-br from-gray-300 to-red-500 border border-red-400 flex items-center justify-center text-[8px] font-bold text-white shadow-sm">Li</div>
+                    <div class="flex flex-col">
+                        <span class="text-xs md:text-sm font-bold text-red-300">Dendrit (Kurzschluss)</span>
+                        <span class="text-[9px] md:text-[10px] text-gray-400">Gestapelte Li-Atome</span>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <div class="w-5 h-5 rounded-full bg-gradient-to-br from-amber-700 to-amber-900 border border-amber-500 flex items-center justify-center text-[8px] font-bold text-white shadow-sm">Li</div>
+                    <div class="flex flex-col">
+                        <span class="text-xs md:text-sm font-bold text-amber-500">Gefangen in SEI</span>
+                        <span class="text-[9px] md:text-[10px] text-gray-400">Kapazitätsverlust</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        const canvas = document.getElementById('batteryCanvas');
+        const ctx = canvas.getContext('2d');
+        const container = document.getElementById('canvas-container');
+
+        const state = {
+            mode: 'normal',
+            action: 'pause',
+            soc: 50,
+            animSpeed: 1,
+            cRate: 1,
+            ambientTemp: 20,
+            cellTemp: 20,
+            
+            seiThickness: 0,
+            dendriteLength: 0,
+            shortCircuited: false,
+            runaway: false,
+            
+            width: window.innerWidth,
+            height: window.innerHeight
+        };
+
+        const ui = {
+            tabs: { normal: document.getElementById('tab-normal'), danger: document.getElementById('tab-danger') },
+            panels: { normal: document.getElementById('panel-normal'), danger: document.getElementById('panel-danger') },
+            btns: { charge: document.getElementById('btn-charge'), discharge: document.getElementById('btn-discharge'), pause: document.getElementById('btn-pause'), reset: document.getElementById('btn-reset'), simulate: document.getElementById('btn-simulate-aging') },
+            sliders: { speed: document.getElementById('slider-speed'), crate: document.getElementById('slider-crate'), temp: document.getElementById('slider-temp') },
+            labels: { speed: document.getElementById('lbl-speed'), crate: document.getElementById('lbl-crate'), temp: document.getElementById('lbl-temp') },
+            hud: { socText: document.getElementById('hud-soc'), socBar: document.getElementById('bar-soc'), cellTemp: document.getElementById('hud-celltemp'), infoText: document.getElementById('info-text-normal'), warningList: document.getElementById('warning-list'), legendDendrite: document.getElementById('legend-dendrite'), voltageText: document.getElementById('hud-voltage'), graphCanvas: document.getElementById('voltage-graph') }
+        };
+
+        let bounds = {};
+        let slots = { anode: [], cathode: [] };
+        let activeProcesses = [];
+        let fireParticles = [];
+        let dendrites = [];
+        let timeProcessSpawn = 0;
+        let lastTime = performance.now();
+
+        function resizeApp() {
+            const rect = container.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width = rect.width + 'px';
+            canvas.style.height = rect.height + 'px';
+            
+            state.width = rect.width;
+            state.height = rect.height;
+            initSlots(); 
+        }
+
+        window.addEventListener('resize', resizeApp);
+
+        ui.tabs.normal.addEventListener('click', () => switchMode('normal'));
+        ui.tabs.danger.addEventListener('click', () => switchMode('danger'));
+
+        function switchMode(mode) {
+            state.mode = mode;
+            if (mode === 'normal') {
+                ui.tabs.normal.className = 'flex-1 py-2 rounded-md bg-blue-600 text-white text-sm font-bold shadow transition-colors';
+                ui.tabs.danger.className = 'flex-1 py-2 rounded-md text-gray-400 hover:text-gray-200 text-sm font-bold transition-colors';
+                ui.panels.normal.classList.remove('hidden');
+                ui.panels.danger.classList.add('hidden');
+                ui.hud.legendDendrite.classList.add('hidden');
+                ui.hud.legendDendrite.classList.remove('flex');
+                resetBattery();
+            } else {
+                ui.tabs.danger.className = 'flex-1 py-2 rounded-md bg-orange-600 text-white text-sm font-bold shadow transition-colors';
+                ui.tabs.normal.className = 'flex-1 py-2 rounded-md text-gray-400 hover:text-gray-200 text-sm font-bold transition-colors';
+                ui.panels.danger.classList.remove('hidden');
+                ui.panels.normal.classList.add('hidden');
+                ui.hud.legendDendrite.classList.remove('hidden');
+                ui.hud.legendDendrite.classList.add('flex');
+                state.action = 'pause';
+            }
+        }
+
+        ui.btns.charge.addEventListener('click', () => { state.action = 'charge'; updateInfoText(); });
+        ui.btns.discharge.addEventListener('click', () => { state.action = 'discharge'; updateInfoText(); });
+        ui.btns.pause.addEventListener('click', () => { state.action = 'pause'; updateInfoText(); });
+        ui.btns.reset.addEventListener('click', resetBattery);
+        ui.btns.simulate.addEventListener('click', () => {
+            if(!state.runaway) { state.action = 'charge'; simulateAgingTick(); }
+        });
+
+        ui.sliders.speed.addEventListener('input', (e) => {
+            state.animSpeed = parseFloat(e.target.value);
+            ui.labels.speed.textContent = state.animSpeed.toFixed(1) + 'x';
+        });
+        ui.sliders.crate.addEventListener('input', (e) => {
+            state.cRate = parseFloat(e.target.value);
+            ui.labels.crate.textContent = state.cRate.toFixed(1) + ' C';
+        });
+        ui.sliders.temp.addEventListener('input', (e) => {
+            state.ambientTemp = parseInt(e.target.value);
+            ui.labels.temp.textContent = state.ambientTemp + ' °C';
+            if(!state.runaway) state.cellTemp = state.ambientTemp;
+        });
+
+        function updateInfoText() {
+            if(state.action === 'charge') {
+                ui.hud.infoText.innerHTML = "<b>Laden:</b><br>Das Ladegerät übt einen elektrischen Zwang aus. Das neutrale Lithium-Atom wird gespalten. Das Elektron muss durch das Kabel, das Ion schwimmt durch den Elektrolyt.";
+            } else if (state.action === 'discharge') {
+                ui.hud.infoText.innerHTML = "<b>Entladen:</b><br><span class='text-green-300'>Warum bleibt die Spannung konstant?</span><br>Der chemische Energiegewinn beim Wechsel von Anode zu Kathode bleibt für jedes Atom gleich. Der 'Druck' (Spannung) fällt also nicht ab wie beim Kondensator!";
+            } else {
+                ui.hud.infoText.innerHTML = "System <b>pausiert</b>. Wähle <b>Laden</b> oder <b>Entladen</b>, um die Reaktion zu starten.";
+            }
+        }
+
+        function resetBattery() {
+            state.soc = 50;
+            state.seiThickness = 0;
+            state.dendriteLength = 0;
+            state.shortCircuited = false;
+            state.runaway = false;
+            state.cellTemp = state.ambientTemp;
+            state.action = 'pause';
+            activeProcesses = [];
+            fireParticles = [];
+            dendrites = [];
+            initSlots();
+            updateWarnings();
+            updateInfoText();
+        }
+
+        function triggerRunaway() {
+            if (state.runaway) return; // Prevent multiple triggers
+            state.shortCircuited = true;
+            state.runaway = true;
+            state.cellTemp = 800; // Sofortige massive Hitze
+            state.action = 'pause'; // Alles andere stoppt
+            updateWarnings();
+        }
+
+        function updateWarnings() {
+            let html = "";
+            if(state.runaway) {
+                html += `<li class="text-red-500 font-bold text-sm bg-red-900/30 p-2 rounded border border-red-500/50">THERMAL RUNAWAY!<br><span class="text-[10px] font-normal text-red-300">Zelle brennt ab. Reset erforderlich.</span></li>`;
+            } else if(state.shortCircuited) {
+                html += `<li class="text-red-500 font-bold bg-red-900/20 p-2 rounded">Kurzschluss!</li>`;
+            } else {
+                let issues = 0;
+                if(state.dendriteLength > 25) { html += `<li class="text-orange-400">Gefährliches Dendritenwachstum!</li>`; issues++; } 
+                else if(state.dendriteLength > 5) { html += `<li class="text-yellow-400">Lithium-Plating (Nadeln entstehen).</li>`; }
+                
+                if(state.seiThickness > 30) { html += `<li class="text-amber-500">Dicke SEI-Mauer: Hoher Kapazitätsverlust.</li>`; issues++; } 
+                else if (state.seiThickness > 10) { html += `<li class="text-yellow-500">SEI wächst (Atome gefangen).</li>`; }
+
+                if(issues === 0 && state.dendriteLength <= 5 && state.seiThickness <= 10) {
+                    html = `<li class="text-green-500">Zelle im Normalzustand.</li>`;
+                }
+            }
+            ui.hud.warningList.innerHTML = html;
+        }
+
+        function getVoltage(soc) {
+            if (soc <= 0) return 3.0;
+            if (soc >= 100) return 4.2;
+            return 3.7 + 0.5 * Math.exp(-(100 - soc) / 10) - 0.7 * Math.exp(-soc / 10);
+        }
+
+        function drawVoltageGraph() {
+            const c = ui.hud.graphCanvas;
+            if(!c) return;
+            const context = c.getContext('2d');
+            const rect = c.parentElement.getBoundingClientRect();
+            const dpr = window.devicePixelRatio || 1;
+            
+            c.width = rect.width * dpr;
+            c.height = rect.height * dpr;
+            c.style.width = rect.width + 'px';
+            c.style.height = rect.height + 'px';
+            
+            context.scale(dpr, dpr);
+            const w = rect.width;
+            const h = rect.height;
+            
+            context.clearRect(0, 0, w, h);
+            
+            // Grid 3.7V
+            context.strokeStyle = '#1f2937';
+            context.lineWidth = 1;
+            context.beginPath(); context.moveTo(0, h/2); context.lineTo(w, h/2); context.stroke();
+
+            // Voltage Curve
+            context.beginPath();
+            context.strokeStyle = '#6b7280';
+            context.lineWidth = 2;
+            for(let x = 0; x <= w; x++) {
+                let s = (x / w) * 100;
+                let v = getVoltage(s);
+                let y = h - ((v - 3.0) / (4.2 - 3.0)) * (h - 10) - 5;
+                if(x === 0) context.moveTo(x, y); else context.lineTo(x, y);
+            }
+            context.stroke();
+            
+            // Current Point
+            let currentV = getVoltage(state.soc);
+            let px = (state.soc / 100) * w;
+            let py = h - ((currentV - 3.0) / (4.2 - 3.0)) * (h - 10) - 5;
+            
+            context.shadowColor = '#60a5fa'; context.shadowBlur = 8;
+            context.fillStyle = '#60a5fa';
+            context.beginPath(); context.arc(px, py, 4, 0, Math.PI*2); context.fill();
+            context.shadowBlur = 0;
+            
+            context.strokeStyle = '#3b82f6'; context.setLineDash([2, 2]);
+            context.beginPath(); context.moveTo(px, py); context.lineTo(px, h); context.stroke();
+            context.setLineDash([]);
+        }
+
+        function simulateAgingTick() {
+            const temp = state.ambientTemp;
+            const crate = state.cRate;
+            
+            let platingFactor = 1.0;
+            if (temp < 20) platingFactor += (20 - temp) * 0.5;
+            platingFactor *= (crate * 1.5);
+            
+            state.dendriteLength += platingFactor * 6.0;
+
+            let seiFactor = 1.0;
+            if (temp > 30) seiFactor += (temp - 30) * 0.4;
+            state.seiThickness += (crate * 1.5) * seiFactor;
+
+            if(state.dendriteLength > 5 && dendrites.length < Math.floor(state.dendriteLength / 15) + 1) {
+                generateDendrite();
+            }
+
+            if (!state.runaway) {
+                state.cellTemp = state.ambientTemp + (crate * crate * 2);
+            }
+            updateWarnings();
+        }
+
+        function getVisualSeiWidth() {
+            if(!bounds || !bounds.sepW) return 0;
+            const maxSeiPx = bounds.sepW * 0.4;
+            return Math.min(maxSeiPx, state.seiThickness * 1.5);
+        }
+
+        function generateDendrite() {
+            const startY = bounds.elecTop + Math.random() * (bounds.elecBot - bounds.elecTop);
+            const startX = bounds.anodeX + bounds.anodeW + getVisualSeiWidth();
+            dendrites.push({
+                pts: [{x: startX, y: startY}],
+                active: true,
+                baseLength: state.dendriteLength
+            });
+        }
+
+        function initSlots() {
+            const w = state.width;
+            const h = state.height;
+            
+            bounds = {
+                cuX: w * 0.05,       cuW: w * 0.03,
+                anodeX: w * 0.08,    anodeW: w * 0.22,
+                sepX: w * 0.30,      sepW: w * 0.40, // Schwamm-Bereich (gesamter Spalt)
+                cathodeX: w * 0.70,  cathodeW: w * 0.22,
+                alX: w * 0.92,       alW: w * 0.03,
+                
+                elecTop: h * 0.25,
+                elecBot: h * 0.80,
+                wireY: h * 0.10
+            };
+
+            slots.anode = [];
+            slots.cathode = [];
+            
+            let slotSpacing = Math.min(35, w * 0.05);
+            
+            for(let x = bounds.anodeX + 25; x < bounds.anodeX + bounds.anodeW - 15; x += slotSpacing) {
+                for(let y = bounds.elecTop + 25; y < bounds.elecBot - 20; y += slotSpacing) {
+                    slots.anode.push({ x, y, occupied: Math.random() * 100 < state.soc, pending: false });
+                }
+            }
+            
+            for(let x = bounds.cathodeX + 25; x < bounds.cathodeX + bounds.cathodeW - 15; x += slotSpacing) {
+                for(let y = bounds.elecTop + 25; y < bounds.elecBot - 20; y += slotSpacing) {
+                    slots.cathode.push({ x, y, occupied: Math.random() * 100 > state.soc, pending: false });
+                }
+            }
+        }
+
+        class ReactionProcess {
+            constructor(type) {
+                this.type = type; // 'charge' / 'discharge'
+                this.phase = 'extract'; 
+                
+                let sourceSlots = this.type === 'charge' ? slots.cathode : slots.anode;
+                let destSlots = this.type === 'charge' ? slots.anode : slots.cathode;
+                
+                let validSources = sourceSlots.filter(s => s.occupied && !s.pending);
+                let validDests = destSlots.filter(s => !s.occupied && !s.pending);
+                
+                if(validSources.length === 0 || validDests.length === 0) {
+                    this.invalid = true;
+                    return;
+                }
+                
+                this.srcSlot = validSources[Math.floor(Math.random() * validSources.length)];
+                this.dstSlot = validDests[Math.floor(Math.random() * validDests.length)];
+                
+                this.srcSlot.pending = true;
+                this.dstSlot.pending = true;
+                
+                this.atomPos = { x: this.srcSlot.x, y: this.srcSlot.y };
+                this.ionPos = { x: 0, y: 0 };
+                this.elecPos = { x: 0, y: 0 };
+                
+                if (this.type === 'charge') {
+                    this.srcInterfaceX = bounds.cathodeX; 
+                    this.dstInterfaceX = bounds.anodeX + bounds.anodeW + getVisualSeiWidth(); // Geht bis zur SEI Wand
+                    this.srcCollectorX = bounds.alX + bounds.alW/2;
+                    this.dstCollectorX = bounds.cuX + bounds.cuW/2;
+                } else {
+                    this.srcInterfaceX = bounds.anodeX + bounds.anodeW + getVisualSeiWidth();
+                    this.dstInterfaceX = bounds.cathodeX;
+                    this.srcCollectorX = bounds.cuX + bounds.cuW/2;
+                    this.dstCollectorX = bounds.alX + bounds.alW/2;
+                }
+                this.pauseTimer = 0; 
+            }
+
+            update(dt) {
+                if(this.invalid) return true; 
+                
+                let speedMultiplier = state.animSpeed;
+                if (state.mode === 'danger') speedMultiplier *= state.cRate;
+                const speed = 200 * speedMultiplier;
+                const step = speed * dt;
+
+                if (this.pauseTimer > 0) {
+                    this.pauseTimer -= dt * speedMultiplier;
+                    return false;
+                }
+
+                if (this.phase === 'extract') {
+                    if (this.moveTowards(this.atomPos, this.srcInterfaceX, this.srcSlot.y, step)) {
+                        this.phase = 'split';
+                        this.ionPos = { ...this.atomPos };
+                        this.elecPos = { ...this.atomPos };
+                        this.pauseTimer = 0.25; // Deutliche Pause für die Spaltung
+                    }
+                } 
+                else if (this.phase === 'split') {
+                    let eReached = this.moveTowards(this.elecPos, this.srcCollectorX, this.srcSlot.y, step * 4);
+                    if (eReached) this.phase = 'transit';
+                }
+                else if (this.phase === 'transit') {
+                    let iReached = this.moveTowards(this.ionPos, this.dstInterfaceX, this.dstSlot.y, step * 0.8);
+                    
+                    let eTargetY = bounds.wireY;
+                    let eTargetX = this.dstCollectorX;
+                    
+                    if (this.elecPos.y > eTargetY && this.elecPos.x === this.srcCollectorX) {
+                        this.moveTowards(this.elecPos, this.srcCollectorX, eTargetY, step * 4);
+                    } else if (this.elecPos.x !== eTargetX) {
+                        this.moveTowards(this.elecPos, eTargetX, eTargetY, step * 4);
+                    } else if (this.elecPos.y < this.dstSlot.y) {
+                        this.moveTowards(this.elecPos, eTargetX, this.dstSlot.y, step * 4);
+                    }
+                    
+                    if (iReached && this.elecPos.x === eTargetX && this.elecPos.y === this.dstSlot.y) {
+                        this.phase = 'merge';
+                    }
+                }
+                else if (this.phase === 'merge') {
+                    let eReached = this.moveTowards(this.elecPos, this.dstInterfaceX, this.dstSlot.y, step * 4);
+                    if (eReached) {
+                        this.phase = 'insert';
+                        this.atomPos = { ...this.ionPos };
+                        this.pauseTimer = 0.15; // Pause beim Zusammenfügen
+                    }
+                }
+                else if (this.phase === 'insert') {
+                    if (this.moveTowards(this.atomPos, this.dstSlot.x, this.dstSlot.y, step)) {
+                        this.srcSlot.occupied = false;
+                        this.srcSlot.pending = false;
+                        this.dstSlot.occupied = true;
+                        this.dstSlot.pending = false;
+                        
+                        let totalSlots = slots.anode.length;
+                        if(totalSlots > 0) {
+                            if(this.type === 'charge') state.soc += (100 / totalSlots);
+                            else state.soc -= (100 / totalSlots);
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            moveTowards(pos, tx, ty, amount) {
+                let dx = tx - pos.x;
+                let dy = ty - pos.y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+                if (dist <= amount) { pos.x = tx; pos.y = ty; return true; }
+                pos.x += (dx / dist) * amount;
+                pos.y += (dy / dist) * amount;
+                return false;
+            }
+
+            draw(ctx) {
+                if(this.invalid) return;
+                if (this.phase === 'extract' || this.phase === 'insert') {
+                    this.drawAtom(ctx, this.atomPos.x, this.atomPos.y);
+                } else if (this.phase === 'split' || this.phase === 'transit' || this.phase === 'merge') {
+                    this.drawIon(ctx, this.ionPos.x, this.ionPos.y);
+                    this.drawElectron(ctx, this.elecPos.x, this.elecPos.y);
+                }
+            }
+
+            drawAtom(ctx, x, y) {
+                ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI*2);
+                let grad = ctx.createRadialGradient(x-3, y-3, 1, x, y, 10);
+                grad.addColorStop(0, '#9ca3af'); grad.addColorStop(1, '#4b5563');
+                ctx.fillStyle = grad; ctx.fill(); 
+                ctx.lineWidth = 1.5; ctx.strokeStyle = '#d1d5db'; ctx.stroke();
+                ctx.fillStyle = 'white'; ctx.font = 'bold 10px sans-serif';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Li', x, y+1);
+            }
+
+            drawIon(ctx, x, y) {
+                ctx.beginPath(); ctx.arc(x, y, 8, 0, Math.PI*2);
+                let grad = ctx.createRadialGradient(x-2, y-2, 1, x, y, 8);
+                grad.addColorStop(0, '#4ade80'); grad.addColorStop(1, '#16a34a');
+                ctx.fillStyle = grad; ctx.fill(); 
+                ctx.lineWidth = 1.5; ctx.strokeStyle = '#86efac'; ctx.stroke();
+                ctx.fillStyle = 'white'; ctx.font = 'bold 12px sans-serif';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('+', x, y+1);
+            }
+
+            drawElectron(ctx, x, y) {
+                ctx.beginPath(); ctx.arc(x, y, 6, 0, Math.PI*2);
+                let grad = ctx.createRadialGradient(x-2, y-2, 1, x, y, 6);
+                grad.addColorStop(0, '#60a5fa'); grad.addColorStop(1, '#2563eb');
+                ctx.fillStyle = grad; ctx.fill(); 
+                ctx.lineWidth = 1.5; ctx.strokeStyle = '#93c5fd'; ctx.stroke();
+                ctx.fillStyle = 'white'; ctx.font = 'bold 12px sans-serif';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('-', x, y);
+                
+                ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI*2);
+                ctx.fillStyle = 'rgba(59, 130, 246, 0.3)'; ctx.fill();
+            }
+        }
+
+        class FireParticle {
+            constructor(x, y) {
+                this.x = x; this.y = y;
+                this.size = Math.random() * 30 + 15;
+                this.life = 1.0;
+                this.vx = (Math.random() - 0.5) * 8;
+                this.vy = -Math.random() * 12 - 4;
+                const colors = ['#ef4444', '#f97316', '#eab308']; 
+                this.color = colors[Math.floor(Math.random() * colors.length)];
+            }
+            update(dt) {
+                this.x += this.vx * dt * 60;
+                this.y += this.vy * dt * 60;
+                this.life -= 0.015 * dt * 60;
+                this.size *= (1 - 0.02 * dt * 60);
+            }
+            draw(ctx) {
+                if(this.life <= 0) return;
+                ctx.globalAlpha = this.life;
+                ctx.fillStyle = this.color;
+                ctx.beginPath(); ctx.arc(this.x, this.y, this.size, 0, Math.PI*2); ctx.fill();
+                ctx.globalAlpha = 1.0;
+            }
+        }
+
+        function drawElectrolyte(ctx, x, y, w, h, time) {
+            // Blaues Elektrolyt im GESAMTEN Spalt
+            let grad = ctx.createLinearGradient(x, y, x, y + h);
+            grad.addColorStop(0, 'rgba(14, 165, 233, 0.15)');
+            grad.addColorStop(0.5, 'rgba(14, 165, 233, 0.35)'); 
+            grad.addColorStop(1, 'rgba(14, 165, 233, 0.15)');
+            ctx.fillStyle = grad;
+            ctx.fillRect(x, y, w, h);
+
+            // Mikroporöse Schwamm-Struktur für den Separator (überall)
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            for(let px = x + 10; px < x + w - 5; px += 20) {
+                for(let py = y + 10; py < y + h - 5; py += 20) {
+                    let ox = Math.sin((py+px) * 0.1 + time) * 3;
+                    let oy = Math.cos((px-py) * 0.1 + time) * 3;
+                    ctx.moveTo(px + ox - 5, py + oy - 5);
+                    ctx.lineTo(px + ox + 5, py + oy + 5);
+                    ctx.moveTo(px + ox + 5, py + oy - 5);
+                    ctx.lineTo(px + ox - 5, py + oy + 5);
+                }
+            }
+            ctx.stroke();
+
+            // Bläschen
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+            for(let i = 0; i < 30; i++) {
+                let bx = x + ((i * 47 + time * 15) % w);
+                let by = y + h - ((i * 73 + time * 30) % h);
+                let size = 1.5 + (i % 2);
+                bx += Math.sin(time * 3 + i) * 3;
+                bx = Math.max(x + size, Math.min(x + w - size, bx));
+                ctx.beginPath(); ctx.arc(bx, by, size, 0, Math.PI*2); ctx.fill();
+            }
+        }
+
+        const drawTrappedAtom = (x, y, type) => {
+            ctx.beginPath(); ctx.arc(x, y, 5.5, 0, Math.PI*2);
+            let grad = ctx.createRadialGradient(x-2, y-2, 1, x, y, 5.5);
+            if (type === 'sei') {
+                grad.addColorStop(0, '#b45309'); grad.addColorStop(1, '#78350f');
+                ctx.strokeStyle = '#f59e0b';
+            } else {
+                grad.addColorStop(0, '#d1d5db'); grad.addColorStop(1, '#ef4444');
+                ctx.strokeStyle = '#f87171';
+            }
+            ctx.fillStyle = grad; ctx.fill();
+            ctx.lineWidth = 1; ctx.stroke();
+            ctx.fillStyle = 'white'; ctx.font = 'bold 7px sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Li', x, y+1);
+        };
+
+        const drawStaticAtom = (x, y) => {
+            ctx.beginPath(); ctx.arc(x, y, 10, 0, Math.PI*2);
+            let grad = ctx.createRadialGradient(x-3, y-3, 1, x, y, 10);
+            grad.addColorStop(0, '#9ca3af'); grad.addColorStop(1, '#4b5563');
+            ctx.fillStyle = grad; ctx.fill(); 
+            ctx.lineWidth = 1.5; ctx.strokeStyle = '#d1d5db'; ctx.stroke();
+            ctx.fillStyle = 'white'; ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('Li', x, y+1);
+        };
+
+        function draw(now) {
+            let dt = (now - lastTime) / 1000;
+            if (dt > 0.1) dt = 0.1;
+            lastTime = now;
+            
+            const w = state.width;
+            const h = state.height;
+
+            ctx.save();
+            const dpr = window.devicePixelRatio || 1;
+            ctx.scale(dpr, dpr);
+            
+            if (state.runaway) {
+                ctx.translate((Math.random() - 0.5) * 15, (Math.random() - 0.5) * 15);
+            }
+
+            ctx.fillStyle = '#030712';
+            ctx.fillRect(0, 0, w, h);
+
+            // Kabel & Verbraucher
+            ctx.strokeStyle = '#4b5563'; ctx.lineWidth = 6; ctx.lineJoin = 'round';
+            ctx.beginPath();
+            ctx.moveTo(bounds.cuX + bounds.cuW/2, bounds.elecTop);
+            ctx.lineTo(bounds.cuX + bounds.cuW/2, bounds.wireY);
+            ctx.lineTo(bounds.alX + bounds.alW/2, bounds.wireY);
+            ctx.lineTo(bounds.alX + bounds.alW/2, bounds.elecTop);
+            ctx.stroke();
+
+            if (state.action !== 'pause' && !state.shortCircuited) {
+                ctx.strokeStyle = state.action === 'charge' ? 'rgba(74, 222, 128, 0.5)' : 'rgba(96, 165, 250, 0.5)';
+                ctx.lineWidth = 2; ctx.stroke();
+            }
+
+            const midWireX = (bounds.cuX + bounds.cuW/2 + bounds.alX + bounds.alW/2) / 2;
+            ctx.fillStyle = '#1f2937';
+            ctx.beginPath(); ctx.arc(midWireX, bounds.wireY, 25, 0, Math.PI*2); ctx.fill();
+            ctx.lineWidth = 3; ctx.strokeStyle = '#4b5563'; ctx.stroke();
+            
+            ctx.fillStyle = 'white'; ctx.font = '24px "Material Icons"';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            let icon = 'horizontal_rule'; let flowColor = "white";
+            
+            if(state.action === 'charge') { icon = 'electrical_services'; flowColor = '#4ade80'; } 
+            else if(state.action === 'discharge') { 
+                icon = 'lightbulb'; flowColor = '#60a5fa';
+                ctx.shadowColor = '#fbbf24'; ctx.shadowBlur = 15; ctx.fillStyle = '#fbbf24';
+            }
+            ctx.fillText(icon, midWireX, bounds.wireY);
+            ctx.shadowBlur = 0;
+
+            // Elektroden & Elektrolyt
+            let cuGrad = ctx.createLinearGradient(bounds.cuX, 0, bounds.cuX + bounds.cuW, 0);
+            cuGrad.addColorStop(0, '#78350f'); cuGrad.addColorStop(0.5, '#b45309'); cuGrad.addColorStop(1, '#78350f');
+            ctx.fillStyle = cuGrad; ctx.fillRect(bounds.cuX, bounds.elecTop, bounds.cuW, bounds.elecBot - bounds.elecTop);
+            
+            let alGrad = ctx.createLinearGradient(bounds.alX, 0, bounds.alX + bounds.alW, 0);
+            alGrad.addColorStop(0, '#6b7280'); alGrad.addColorStop(0.5, '#d1d5db'); alGrad.addColorStop(1, '#6b7280');
+            ctx.fillStyle = alGrad; ctx.fillRect(bounds.alX, bounds.elecTop, bounds.alW, bounds.elecBot - bounds.elecTop);
+
+            ctx.fillStyle = '#111827'; ctx.fillRect(bounds.anodeX, bounds.elecTop, bounds.anodeW, bounds.elecBot - bounds.elecTop);
+            ctx.fillStyle = '#1e3a8a'; ctx.fillRect(bounds.cathodeX, bounds.elecTop, bounds.cathodeW, bounds.elecBot - bounds.elecTop);
+
+            // Elektrolyt-Schwamm
+            drawElectrolyte(ctx, bounds.sepX, bounds.elecTop, bounds.sepW, bounds.elecBot - bounds.elecTop, now/1000);
+
+            // Gitter andeuten
+            ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
+            let slotSpacing = Math.min(35, w * 0.05);
+            for(let y = bounds.elecTop + 25; y < bounds.elecBot; y += slotSpacing) {
+                ctx.beginPath(); ctx.moveTo(bounds.anodeX + 5, y); ctx.lineTo(bounds.anodeX + bounds.anodeW - 5, y); ctx.stroke();
+            }
+            for(let x = bounds.cathodeX + 25; x < bounds.cathodeX + bounds.cathodeW; x+= slotSpacing) {
+                for(let y = bounds.elecTop + 25; y < bounds.elecBot; y += slotSpacing) {
+                    ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI*2); ctx.stroke();
+                }
+            }
+
+            // Beschriftungen
+            ctx.fillStyle = 'white'; ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+            let labelY = bounds.elecBot + 25;
+            ctx.fillText('Cu (-)', bounds.cuX + bounds.cuW/2, labelY);
+            ctx.fillText('Al (+)', bounds.alX + bounds.alW/2, labelY);
+            
+            ctx.font = 'bold 13px sans-serif';
+            ctx.fillText('Anode (Graphit)', bounds.anodeX + bounds.anodeW/2, labelY);
+            ctx.fillText('Separator & Elektrolyt', bounds.sepX + bounds.sepW/2, labelY);
+            ctx.fillText('Kathode (Metalloxid)', bounds.cathodeX + bounds.cathodeW/2, labelY);
+            
+            ctx.fillStyle = '#9ca3af'; ctx.font = '10px sans-serif';
+            ctx.fillText('Poröser Schwamm, durchlässig für Ionen', bounds.sepX + bounds.sepW/2, labelY + 14);
+
+            // SEI und Dendriten
+            if (state.mode === 'danger') {
+                const seiWidth = getVisualSeiWidth();
+                if(seiWidth > 0) {
+                    ctx.fillStyle = 'rgba(139, 69, 19, 0.9)'; 
+                    ctx.fillRect(bounds.anodeX + bounds.anodeW, bounds.elecTop, seiWidth, bounds.elecBot - bounds.elecTop);
+                    
+                    ctx.strokeStyle = 'rgba(70, 35, 10, 0.8)'; ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    for(let i=0; i<seiWidth; i+=8) {
+                        ctx.moveTo(bounds.anodeX + bounds.anodeW + i, bounds.elecTop);
+                        ctx.lineTo(bounds.anodeX + bounds.anodeW + i, bounds.elecBot);
+                    }
+                    ctx.stroke();
+
+                    for(let px = 5; px < seiWidth - 4; px += 12) {
+                        for(let py = bounds.elecTop + 15; py < bounds.elecBot - 10; py += 15) {
+                            let drawY = py + (Math.sin(px * 17.3) * 5);
+                            if(drawY > bounds.elecTop && drawY < bounds.elecBot) drawTrappedAtom(bounds.anodeX + bounds.anodeW + px, drawY, 'sei');
+                        }
+                    }
+                }
+
+                ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+                dendrites.forEach(d => {
+                    const currentSeiEdgeX = bounds.anodeX + bounds.anodeW + seiWidth;
+                    const shiftX = currentSeiEdgeX - d.pts[0].x;
+                    if (shiftX > 0) d.pts.forEach(p => p.x += shiftX);
+
+                    if (d.active && state.action === 'charge') {
+                        let targetLen = state.dendriteLength - d.baseLength;
+                        let currentLen = d.pts[d.pts.length-1].x - d.pts[0].x;
+                        
+                        if (currentLen < targetLen) {
+                            let lastPt = d.pts[d.pts.length-1];
+                            // Aggressiveres Wachstum
+                            let newX = lastPt.x + (Math.random() * 12 + 6); 
+                            let newY = lastPt.y + (Math.random() - 0.5) * 18; 
+                            
+                            if (newY < bounds.elecTop + 5) newY = bounds.elecTop + 10;
+                            if (newY > bounds.elecBot - 5) newY = bounds.elecBot - 10;
+                            
+                            if (newX >= bounds.cathodeX) {
+                                newX = bounds.cathodeX; 
+                                d.active = false; 
+                                triggerRunaway();
+                            }
+                            d.pts.push({x: newX, y: newY});
+                        }
+                    }
+                    
+                    // Zeichne roten Strang
+                    ctx.beginPath();
+                    ctx.moveTo(d.pts[0].x, d.pts[0].y);
+                    for(let i=1; i<d.pts.length; i++) {
+                        ctx.lineTo(d.pts[i].x, d.pts[i].y);
+                    }
+                    ctx.stroke();
+
+                    // Zeichne Metall-Atome darauf
+                    for(let i=0; i<d.pts.length; i+=1) {
+                         drawTrappedAtom(d.pts[i].x, d.pts[i].y, 'dendrite');
+                    }
+                    
+                    let tip = d.pts[d.pts.length-1];
+                    ctx.shadowColor = '#f87171'; ctx.shadowBlur = 10; ctx.fillStyle = '#f87171';
+                    ctx.beginPath(); ctx.arc(tip.x, tip.y, 6, 0, Math.PI*2); ctx.fill();
+                    ctx.shadowBlur = 0;
+                });
+            }
+
+            // Statische Atome zeichnen
+            slots.anode.forEach(s => { if(s.occupied && !s.pending) drawStaticAtom(s.x, s.y); });
+            slots.cathode.forEach(s => { if(s.occupied && !s.pending) drawStaticAtom(s.x, s.y); });
+
+            // Animierte Prozesse
+            if (state.action !== 'pause' && !state.shortCircuited) {
+                timeProcessSpawn -= dt;
+                let spawnInterval = 1.0 / (state.animSpeed * (state.mode === 'danger' ? state.cRate : 1));
+                if (timeProcessSpawn <= 0) {
+                    let proc = new ReactionProcess(state.action);
+                    if(!proc.invalid) activeProcesses.push(proc);
+                    timeProcessSpawn = spawnInterval;
+                }
+            }
+
+            activeProcesses = activeProcesses.filter(p => !p.update(dt));
+            activeProcesses.forEach(p => p.draw(ctx));
+
+            // Thermal Runaway Explosion
+            if (state.runaway) {
+                // Vollflächiger Brand
+                if(Math.random() < 0.8) {
+                    for(let i=0; i<8; i++) {
+                        fireParticles.push(new FireParticle(
+                            bounds.anodeX + Math.random()*(bounds.cathodeX + bounds.cathodeW - bounds.anodeX), 
+                            bounds.elecTop - 20 + Math.random()*(bounds.elecBot - bounds.elecTop + 40)
+                        ));
+                    }
+                }
+                
+                ctx.fillStyle = `rgba(239, 68, 68, ${0.3 + Math.abs(Math.sin(now/100))*0.3})`;
+                ctx.fillRect(0,0,w,h);
+                
+                ctx.fillStyle = '#ef4444'; 
+                ctx.font = 'bold 36px md:48px sans-serif';
+                ctx.textAlign = 'center';
+                
+                ctx.shadowColor = 'black'; ctx.shadowBlur = 10;
+                ctx.fillText('THERMAL RUNAWAY!', w/2, h/2 - 20);
+                ctx.font = 'bold 18px md:24px sans-serif';
+                ctx.fillText('Zelle brennt ab. Reset erforderlich.', w/2, h/2 + 20);
+                ctx.shadowBlur = 0;
+            }
+            
+            fireParticles = fireParticles.filter(f => f.life > 0);
+            fireParticles.forEach(f => { f.update(dt); f.draw(ctx); });
+
+            ctx.restore();
+
+            // HUD Update
+            if (state.soc > 100) state.soc = 100;
+            if (state.soc < 0) state.soc = 0;
+            
+            ui.hud.socText.textContent = Math.round(state.soc) + '%';
+            ui.hud.socBar.style.width = state.soc + '%';
+            if (state.soc < 20) ui.hud.socBar.className = "bg-gradient-to-r from-red-600 to-red-500 h-full transition-all duration-300";
+            else ui.hud.socBar.className = "bg-gradient-to-r from-green-500 to-green-400 h-full transition-all duration-300";
+
+            ui.hud.cellTemp.textContent = Math.round(state.cellTemp) + '°C';
+            if(state.cellTemp > 90) ui.hud.cellTemp.className = "font-mono font-bold text-red-500 text-lg animate-pulse";
+            else if(state.cellTemp > 50) ui.hud.cellTemp.className = "font-mono font-bold text-orange-400 text-lg";
+            else ui.hud.cellTemp.className = "font-mono font-bold text-green-400 text-lg";
+
+            let currentVoltage = getVoltage(state.soc);
+            if(ui.hud.voltageText) ui.hud.voltageText.textContent = currentVoltage.toFixed(2) + ' V';
+            drawVoltageGraph();
+
+            requestAnimationFrame(draw);
+        }
+
+        window.onload = function() {
+            resizeApp();
+            updateInfoText();
+            requestAnimationFrame(draw);
+        };
+    </script>
+</body>
+</html>
